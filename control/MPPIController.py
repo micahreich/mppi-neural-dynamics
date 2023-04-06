@@ -14,7 +14,7 @@ class MPPIController:
                  nx: int, nu: int,
                  terminal_cost, state_cost, control_cost,
                  control_cov: np.ndarray,
-                 evolve_state: Callable[[np.ndarray, np.ndarray], np.ndarray],
+                 evolve_state,
                  dt: float,
                  control_noise_initialization: ControlNoiseInit = ControlNoiseInit.LAST,
                  n_realized_controls=1,
@@ -60,7 +60,7 @@ class MPPIController:
         self._exploration_cov = exploration_cov
         self._exploration_lambda = exploration_lambda
 
-        self._default_control_seq = np.zeros((self._horizon_length, self._nu))
+        self._default_control_seq = np.ones((self._horizon_length, self._nu))
         self._last_control_seq = self._default_control_seq
 
         self._evolve_state = evolve_state
@@ -79,54 +79,54 @@ class MPPIController:
         if self._control_range is None:
             print("[MPPI] [Warn] No control range input. Assuming [-inf, inf] on all dimensions.")
 
-    def weight_rollouts(self, rollout_costs):
-        """
-        This function computes the weights of the rollouts based on the rollout costs using an exponential weighting scheme.
-
-        :param rollout_costs: A 1D numpy array representing the costs of the rollouts.
-        :return: A 1D numpy array representing the normalized weights of the rollouts.
-        """
-
-        min_cost = np.min(rollout_costs)
-
-        unnormed_rollout_costs = np.exp(-(1 / self._exploration_lambda) * (rollout_costs - min_cost))
-        rollout_costs_sum = np.sum(unnormed_rollout_costs)
-
-        normalization_factor = 1 / rollout_costs_sum
-
-        return normalization_factor * unnormed_rollout_costs
-
-    def resample_control_seq(self, rollout_costs, control_seq, control_noise):
-        """
-        Resamples the control sequence based on the weights of the rollout costs and the control noise.
-
-        :param rollout_costs: A 1D numpy array representing the costs of the rollouts.
-        :param control_seq: A 3D numpy array (1, horizon_length, nu) representing the control sequence.
-        :param control_noise: A 3D numpy array (n_rollouts, horizon_length, nu) representing the control noise.
-
-        :return: A 3D numpy array (1, horizon_length, nu) representing the resampled control sequence based on
-        the previous sequence and rollout-weighted control noise.
-        """
-        # print("og seq", control_seq, control_seq.shape)
-
-        rollout_weights = self.weight_rollouts(rollout_costs)
-        # print("rollout weights", rollout_weights, rollout_weights.shape)
-
-        repeated_weights = np.tile(rollout_weights.reshape((-1, 1, 1)),
-                                   reps=(1, self._horizon_length, self._nu))
-
-        # print("rollout weights (repd)", repeated_weights, repeated_weights.shape)
-        # print("mult noise", control_noise * repeated_weights)
-        weighted_noise = np.sum(control_noise * repeated_weights, axis=0).reshape((self._horizon_length, self._nu))
-
-        # print("reg noise", control_noise, control_noise.shape)
-        # print("weighted_noise", weighted_noise, weighted_noise.shape)
-
-        resampled_control_seq = control_seq + weighted_noise
-
-        # print("resampled seq", resampled_control_seq, resampled_control_seq.shape)
-
-        return resampled_control_seq
+    # def weight_rollouts(self, rollout_costs):
+    #     """
+    #     This function computes the weights of the rollouts based on the rollout costs using an exponential weighting scheme.
+    #
+    #     :param rollout_costs: A 1D numpy array representing the costs of the rollouts.
+    #     :return: A 1D numpy array representing the normalized weights of the rollouts.
+    #     """
+    #
+    #     min_cost = np.min(rollout_costs)
+    #
+    #     unnormed_rollout_costs = np.exp(-(1 / self._exploration_lambda) * (rollout_costs - min_cost))
+    #     rollout_costs_sum = np.sum(unnormed_rollout_costs)
+    #
+    #     normalization_factor = 1 / rollout_costs_sum
+    #
+    #     return normalization_factor * unnormed_rollout_costs
+    #
+    # def resample_control_seq(self, rollout_costs, control_seq, control_noise):
+    #     """
+    #     Resamples the control sequence based on the weights of the rollout costs and the control noise.
+    #
+    #     :param rollout_costs: A 1D numpy array representing the costs of the rollouts.
+    #     :param control_seq: A 3D numpy array (1, horizon_length, nu) representing the control sequence.
+    #     :param control_noise: A 3D numpy array (n_rollouts, horizon_length, nu) representing the control noise.
+    #
+    #     :return: A 3D numpy array (1, horizon_length, nu) representing the resampled control sequence based on
+    #     the previous sequence and rollout-weighted control noise.
+    #     """
+    #     # print("og seq", control_seq, control_seq.shape)
+    #
+    #     rollout_weights = self.weight_rollouts(rollout_costs)
+    #     # print("rollout weights", rollout_weights, rollout_weights.shape)
+    #
+    #     repeated_weights = np.tile(rollout_weights.reshape((-1, 1, 1)),
+    #                                reps=(1, self._horizon_length, self._nu))
+    #
+    #     # print("rollout weights (repd)", repeated_weights, repeated_weights.shape)
+    #     # print("mult noise", control_noise * repeated_weights)
+    #     weighted_noise = np.sum(control_noise * repeated_weights, axis=0).reshape((self._horizon_length, self._nu))
+    #
+    #     # print("reg noise", control_noise, control_noise.shape)
+    #     # print("weighted_noise", weighted_noise, weighted_noise.shape)
+    #
+    #     resampled_control_seq = control_seq + weighted_noise
+    #
+    #     # print("resampled seq", resampled_control_seq, resampled_control_seq.shape)
+    #
+    #     return resampled_control_seq
 
     def roll_control_seq(self, control_seq):
         """
@@ -172,44 +172,41 @@ class MPPIController:
 
         assert (self._last_control_seq.shape == (self._horizon_length, self._nu))
 
-        control_noise = np.random.multivariate_normal(mean=np.zeros(self._nu),
-                                                      cov=self._exploration_cov,
-                                                      size=(self._n_rollouts, self._horizon_length))
-
         rollout_costs = np.zeros(self._n_rollouts)
 
-        last_states = np.tile(state, reps=(self._n_rollouts, 1))
-        control_seqs = np.tile(self._last_control_seq.reshape((1, self._horizon_length, self._nu)),
-                               reps=(self._n_rollouts, 1, 1))
+        control_noise_seqs = np.zeros((self._horizon_length, self._nu, self._n_rollouts))
+
+        for k in range(0, self._n_rollouts):
+            curr_state = state
+
+            control_noise_seq = np.random.multivariate_normal(mean=np.zeros(self._nu),
+                                                              cov=self._exploration_cov,
+                                                              size=self._horizon_length)
+            control_noise_seqs[:, :, k] = control_noise_seq
+
+            for t in range(0, self._horizon_length):
+                curr_state = self._evolve_state(curr_state, self._last_control_seq[t] + control_noise_seq[t],
+                                                dt=self._dt)
+                rollout_costs[k] += self._state_cost(curr_state) + self._control_cost(self._last_control_seq[t],
+                                                                                      control_noise_seq[t])
+            rollout_costs[k] += self._terminal_cost(curr_state)
+
+        beta = min(rollout_costs)
+        scores = np.exp(-1/self._exploration_lambda * (rollout_costs - beta))
+
+        scores_sum = np.sum(scores)
+        weights = (1 / scores_sum) * scores
 
         for t in range(0, self._horizon_length):
-            current_control = control_seqs[:, t]
-            current_control_noise = control_noise[:, t]
+            added_noise = 0
 
-            noisy_controls = current_control + current_control_noise
+            for k in range(0, self._n_rollouts):
+                added_noise += weights[k] * control_noise_seqs[t, :, k]
+            self._last_control_seq[t] += added_noise
 
-            if self._control_range is not None:
-                noisy_controls = np.clip(noisy_controls,
-                                         a_min=self._control_range["min"],
-                                         a_max=self._control_range["max"])
+        u0 = self._last_control_seq[0]
 
-            # Evolve the states of each rollout for the current time step in parallel
-            evolve_state_args = np.hstack((last_states, noisy_controls))
-            current_states = np.apply_along_axis(self._evolve_state, axis=1, arr=evolve_state_args,
-                                                 nx=self._nx, nu=self._nu, dt=self._dt)
-            # Compute the state costs of each rollout for the current time step in parallel
-            rollout_costs += np.apply_along_axis(self._state_cost, axis=1, arr=current_states)
+        self._last_control_seq = np.roll(self._last_control_seq, -1, axis=0)
+        self._last_control_seq[-1] = self._last_control_seq[-2]
 
-            # Compute the control costs of each rollout for the current time step in parallel
-            controls_cost_args = np.hstack((current_control, current_control_noise))
-            rollout_costs += np.apply_along_axis(self._control_cost, axis=1, arr=controls_cost_args,
-                                                 sigma_inv=self._control_cov_inv, temp=self._exploration_lambda)
-
-            last_states = current_states
-
-        rollout_costs += np.apply_along_axis(self._terminal_cost, axis=1, arr=last_states)
-
-        resampled_control_seq = self.resample_control_seq(rollout_costs, self._last_control_seq, control_noise)
-        self._last_control_seq = self.roll_control_seq(resampled_control_seq)
-
-        return resampled_control_seq[:self._n_realized_controls]
+        return u0
