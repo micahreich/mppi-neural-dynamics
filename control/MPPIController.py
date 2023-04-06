@@ -34,15 +34,12 @@ class MPPIController:
         allow more exploration
         :param nx: Number of elements in the state vector
         :param nu: Number of elements in the control vector
-        :param terminal_cost: Function: (nx,) -> float; terminal state cost calculated at the end of
-        each rollout
-        :param state_cost: Function: (nx,) -> float; cost-to-go calculated once per horizon step per rollout
-        :param control_cost: Function: (nu,) -> float; control cost calculated once per horizon
-        step per rollout
+        :param terminal_cost: function: (ndarray(nx)) -> float32
+        :param state_cost: function: (ndarray(nx)) -> float32
+        :param control_cost: function: (ndarray(nu)) -> float32
+        :param evolve_state: function: (ndarray(nx), ndarray(nu)) -> ndarray(nx)
         :param control_cov: 2D covariance matrix of shape (nu x nu) indicating the covariance of the actual applied
         control V where V ~ Normal(U, control_stddev)
-        :param evolve_state: Function: ((nx nu), nx, nu) -> (nx,) takes in a (horizontal) stacked vector of the
-        state and control along with the state and control dimensions and produces the next state
         :param dt: Time step of the controller
         :param control_noise_initialization: Method with which to initialize new control sequences
         :param n_realized_controls: Number of elements of the control sequence to be returned and executed on the
@@ -60,14 +57,13 @@ class MPPIController:
         self._exploration_cov = exploration_cov
         self._exploration_lambda = exploration_lambda
 
-        self._default_control_seq = np.ones((self._horizon_length, self._nu))
+        self._default_control_seq = np.zeros((self._horizon_length, self._nu))
         self._last_control_seq = self._default_control_seq
 
-        self._evolve_state = evolve_state
-
-        self._terminal_cost = terminal_cost
-        self._state_cost = state_cost
-        self._control_cost = control_cost
+        self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu),()->(nx)")
+        self._terminal_cost = np.vectorize(terminal_cost, signature="(nx)->()")
+        self._state_cost = np.vectorize(state_cost, signature="(nx)->()")
+        self._control_cost = np.vectorize(control_cost, signature="(nu),(nu)->()")
 
         self._control_cov = control_cov
         self._control_cov_inv = np.linalg.inv(control_cov)
@@ -155,6 +151,29 @@ class MPPIController:
 
         return rolled_seq
 
+    def score_rollouts(self, rollout_cumcosts):
+        assert (rollout_cumcosts.shape == (self._n_rollouts,))
+
+        beta = min(rollout_cumcosts)
+        scores = np.exp(-1 / self._exploration_lambda * (rollout_cumcosts - beta))
+
+        scores_sum = np.sum(scores)
+        return (1 / scores_sum) * scores
+
+    def weight_rollout_noise(self, rollout_noise_u, weights):
+        assert (rollout_noise_u.shape == (self._n_rollouts, self._nu, self._horizon_length) and
+                weights.shape == (self._n_rollouts,))
+
+        # u_t += sum over all rollouts of w(rollout_i) * noise for rollout i @ time t
+
+        weights = np.tile(weights.reshape((-1, 1, 1)), (1, self._nu, self._horizon_length))
+        weighted_noise_u = rollout_noise_u * weights
+        weighted_noise_u = np.sum(weighted_noise_u, axis=0).T
+
+        assert (weighted_noise_u.shape == (self._horizon_length, self._nu))
+
+        return self._last_control_seq + weighted_noise_u
+
     def step(self, state):
         """
         This function performs a single step of the MPPI controller.
@@ -172,38 +191,37 @@ class MPPIController:
 
         assert (self._last_control_seq.shape == (self._horizon_length, self._nu))
 
-        rollout_costs = np.zeros(self._n_rollouts)
+        rollout_current_states = np.tile(state, (self._n_rollouts, 1))
+        rollout_cumcosts = np.zeros(self._n_rollouts)
 
-        control_noise_seqs = np.zeros((self._horizon_length, self._nu, self._n_rollouts))
-
-        for k in range(0, self._n_rollouts):
-            curr_state = state
-
-            control_noise_seq = np.random.multivariate_normal(mean=np.zeros(self._nu),
-                                                              cov=self._exploration_cov,
-                                                              size=self._horizon_length)
-            control_noise_seqs[:, :, k] = control_noise_seq
-
-            for t in range(0, self._horizon_length):
-                curr_state = self._evolve_state(curr_state, self._last_control_seq[t] + control_noise_seq[t],
-                                                dt=self._dt)
-                rollout_costs[k] += self._state_cost(curr_state) + self._control_cost(self._last_control_seq[t],
-                                                                                      control_noise_seq[t])
-            rollout_costs[k] += self._terminal_cost(curr_state)
-
-        beta = min(rollout_costs)
-        scores = np.exp(-1/self._exploration_lambda * (rollout_costs - beta))
-
-        scores_sum = np.sum(scores)
-        weights = (1 / scores_sum) * scores
+        rollouts_noise_u = np.random.multivariate_normal(mean=np.zeros(self._nu),
+                                                         cov=self._exploration_cov,
+                                                         size=(self._n_rollouts, self._horizon_length)).swapaxes(1, 2)
 
         for t in range(0, self._horizon_length):
-            added_noise = 0
+            rollout_noise_u = rollouts_noise_u[:, :, t]
+            rollout_nominal_u = np.tile(self._last_control_seq[t].reshape(1, -1),
+                                        (self._n_rollouts, 1))
 
-            for k in range(0, self._n_rollouts):
-                added_noise += weights[k] * control_noise_seqs[t, :, k]
-            self._last_control_seq[t] += added_noise
+            rollout_current_u = rollout_nominal_u + rollout_noise_u
 
+            # Evolve states in vectorized form
+            rollout_current_states = self._evolve_state(rollout_current_states, rollout_current_u, self._dt)
+
+            # Calculate current time-step state cost
+            rollout_cumcosts += self._state_cost(rollout_current_states)
+
+            # Calculate current time-step control cost
+            rollout_cumcosts += self._control_cost(rollout_nominal_u, rollout_noise_u)
+
+        # Calculate terminal cost
+        rollout_cumcosts += self._terminal_cost(rollout_current_states)
+
+        # Weight control noise and add to last nominal control sequence
+        rollout_scores = self.score_rollouts(rollout_cumcosts)
+        self._last_control_seq = self.weight_rollout_noise(rollouts_noise_u, weights=rollout_scores)
+
+        # Roll forward the nominal controls and return the first action
         u0 = self._last_control_seq[0]
 
         self._last_control_seq = np.roll(self._last_control_seq, -1, axis=0)

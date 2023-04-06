@@ -24,7 +24,7 @@ def block_on_slope(block_mass, slope_angle, gravity_accel, desired_state, dt):
 
     def control_cost(u, noise):
         noisy_control = u + noise
-        R = np.diag([1e-2])
+        R = np.diag([0.5 * 1e-2])
 
         return noisy_control.T @ R @ noisy_control
 
@@ -46,7 +46,7 @@ def block_on_slope(block_mass, slope_angle, gravity_accel, desired_state, dt):
     controller = MPPIController.MPPIController(
         n_rollouts=200,
         horizon_length=10,
-        exploration_cov=np.array([[25 ** 2]]),
+        exploration_cov=np.array([[10 ** 2]]),
         exploration_lambda=5,
         nx=nx,
         nu=nu,
@@ -77,7 +77,7 @@ controller, simulator = block_on_slope(
 # Create the control loop to run MPPI
 
 current_state = np.array([0, 0])  # [position, velocity]
-simulation_length = 10  # seconds
+simulation_length = 15  # seconds
 
 # Create some lists to hold plotted information
 control_seq = []
