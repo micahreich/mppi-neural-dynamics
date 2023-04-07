@@ -36,7 +36,7 @@ class MPPIController:
         :param nu: Number of elements in the control vector
         :param terminal_cost: function: (ndarray(nx)) -> float32
         :param state_cost: function: (ndarray(nx)) -> float32
-        :param control_cost: function: (ndarray(nu)) -> float32
+        :param control_cost: function: (ndarray(nu), ndarray(nu)) -> float32
         :param evolve_state: function: (ndarray(nx), ndarray(nu)) -> ndarray(nx)
         :param control_cov: 2D covariance matrix of shape (nu x nu) indicating the covariance of the actual applied
         control V where V ~ Normal(U, control_stddev)
@@ -74,6 +74,9 @@ class MPPIController:
 
         if self._control_range is None:
             print("[MPPI] [Warn] No control range input. Assuming [-inf, inf] on all dimensions.")
+
+        assert (self._exploration_cov.shape == (self._nu, self._nu))
+        assert (self._control_cov.shape == (self._nu, self._nu))
 
     def roll_control_seq(self, control_seq):
         """
@@ -119,8 +122,6 @@ class MPPIController:
         weighted_noise_u = rollout_noise_u * weights
         weighted_noise_u = np.sum(weighted_noise_u, axis=0).T
 
-        assert (weighted_noise_u.shape == (self._horizon_length, self._nu))
-
         return self._last_control_seq + weighted_noise_u
 
     def step(self, state):
@@ -137,7 +138,7 @@ class MPPIController:
         Represent random control noise as a np array with shape (K, T, U) where U is the
         shape of the control input.
         """
-
+        assert (state.shape == (self._nx,))
         assert (self._last_control_seq.shape == (self._horizon_length, self._nu))
 
         rollout_current_states = np.tile(state, (self._n_rollouts, 1))
