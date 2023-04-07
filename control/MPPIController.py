@@ -75,55 +75,6 @@ class MPPIController:
         if self._control_range is None:
             print("[MPPI] [Warn] No control range input. Assuming [-inf, inf] on all dimensions.")
 
-    # def weight_rollouts(self, rollout_costs):
-    #     """
-    #     This function computes the weights of the rollouts based on the rollout costs using an exponential weighting scheme.
-    #
-    #     :param rollout_costs: A 1D numpy array representing the costs of the rollouts.
-    #     :return: A 1D numpy array representing the normalized weights of the rollouts.
-    #     """
-    #
-    #     min_cost = np.min(rollout_costs)
-    #
-    #     unnormed_rollout_costs = np.exp(-(1 / self._exploration_lambda) * (rollout_costs - min_cost))
-    #     rollout_costs_sum = np.sum(unnormed_rollout_costs)
-    #
-    #     normalization_factor = 1 / rollout_costs_sum
-    #
-    #     return normalization_factor * unnormed_rollout_costs
-    #
-    # def resample_control_seq(self, rollout_costs, control_seq, control_noise):
-    #     """
-    #     Resamples the control sequence based on the weights of the rollout costs and the control noise.
-    #
-    #     :param rollout_costs: A 1D numpy array representing the costs of the rollouts.
-    #     :param control_seq: A 3D numpy array (1, horizon_length, nu) representing the control sequence.
-    #     :param control_noise: A 3D numpy array (n_rollouts, horizon_length, nu) representing the control noise.
-    #
-    #     :return: A 3D numpy array (1, horizon_length, nu) representing the resampled control sequence based on
-    #     the previous sequence and rollout-weighted control noise.
-    #     """
-    #     # print("og seq", control_seq, control_seq.shape)
-    #
-    #     rollout_weights = self.weight_rollouts(rollout_costs)
-    #     # print("rollout weights", rollout_weights, rollout_weights.shape)
-    #
-    #     repeated_weights = np.tile(rollout_weights.reshape((-1, 1, 1)),
-    #                                reps=(1, self._horizon_length, self._nu))
-    #
-    #     # print("rollout weights (repd)", repeated_weights, repeated_weights.shape)
-    #     # print("mult noise", control_noise * repeated_weights)
-    #     weighted_noise = np.sum(control_noise * repeated_weights, axis=0).reshape((self._horizon_length, self._nu))
-    #
-    #     # print("reg noise", control_noise, control_noise.shape)
-    #     # print("weighted_noise", weighted_noise, weighted_noise.shape)
-    #
-    #     resampled_control_seq = control_seq + weighted_noise
-    #
-    #     # print("resampled seq", resampled_control_seq, resampled_control_seq.shape)
-    #
-    #     return resampled_control_seq
-
     def roll_control_seq(self, control_seq):
         """
         Shifts the control sequence to the left by n_realized_controls items and
@@ -163,8 +114,6 @@ class MPPIController:
     def weight_rollout_noise(self, rollout_noise_u, weights):
         assert (rollout_noise_u.shape == (self._n_rollouts, self._nu, self._horizon_length) and
                 weights.shape == (self._n_rollouts,))
-
-        # u_t += sum over all rollouts of w(rollout_i) * noise for rollout i @ time t
 
         weights = np.tile(weights.reshape((-1, 1, 1)), (1, self._nu, self._horizon_length))
         weighted_noise_u = rollout_noise_u * weights
@@ -223,6 +172,9 @@ class MPPIController:
 
         # Roll forward the nominal controls and return the first action
         u0 = self._last_control_seq[0]
+
+        if self._control_range is not None:
+            u0 = np.clip(u0, self._control_range["min"], self._control_range["max"])
 
         self._last_control_seq = np.roll(self._last_control_seq, -1, axis=0)
         self._last_control_seq[-1] = self._last_control_seq[-2]
