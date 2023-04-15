@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
-    <content url="file://$MODULE_DIR$" />
-    <orderEntry type="jdk" jdkName="Python 3.7 (General)" jdkType="Python SDK" />
+    <content url="file://$MODULE_DIR$">
+      <excludeFolder url="file://$MODULE_DIR$/control/.ipynb_checkpoints" />
+      <excludeFolder url="file://$MODULE_DIR$/neural_networks/inverted_pendulum/models" />
+      <excludeFolder url="file://$MODULE_DIR$/neural_networks/.ipynb_checkpoints" />
+      <excludeFolder url="file://$MODULE_DIR$/notebooks/.ipynb_checkpoints" />
+    </content>
+    <orderEntry type="jdk" jdkName="Python 3.8 (16711-final-project)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
