@@ -129,5 +129,7 @@ dmypy.json
 .pyre/
 
 # ML models
-.npz
+*.npz
 models
+
+.DS_store
