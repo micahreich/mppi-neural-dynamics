@@ -25,7 +25,7 @@ def generate_dataset(n_samples, train_percentage):
 
 if __name__ == "__main__":
     # dataset_fname = generate_dataset(n_samples=200000, train_percentage=0.7)
-    dataset_fname = file_dir + "/data/inverted_pendulum_data_15-04-2023 02:35:20.npz"
+    dataset_fname = file_dir + "/data/inverted_pendulum_data_15-04-2023 02:51:41.npz"
 
     nn = DynamicsNN(ds=inverted_pendulum,
                     n_nodes=32,

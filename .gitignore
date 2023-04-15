@@ -131,5 +131,6 @@ dmypy.json
 # ML models
 *.npz
 models
+data
 
 .DS_store
