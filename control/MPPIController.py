@@ -18,7 +18,8 @@ class MPPIController:
                  control_noise_initialization: ControlNoiseInit = ControlNoiseInit.LAST,
                  n_realized_controls=1,
                  control_range=None,
-                 control_cost=None):
+                 control_cost=None,
+                 nn_dynamics=False):
         """
          Model Predictive Path Integral Controller based on [1], [2]
 
@@ -47,6 +48,7 @@ class MPPIController:
         :param control_range: Dict[str, (nu,)] with keys "min", "max", and "mean" indicating the min, max, and mean
         of control values to use in prediction
         """
+        self.nn_dynamics = nn_dynamics
 
         self._nx = nx
         self._nu = nu
@@ -62,7 +64,11 @@ class MPPIController:
         self._default_control_seq = np.zeros((self._horizon_length, self._nu))
         self._last_control_seq = self._default_control_seq
 
-        self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu),()->(nx)")
+        if self.nn_dynamics:
+            import tensorflow as tf
+            self._evolve_state = evolve_state
+        else:
+            self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu),()->(nx)")
         self._terminal_cost = np.vectorize(terminal_cost, signature="(nx)->()")
         self._state_cost = np.vectorize(state_cost, signature="(nx)->()")
 
@@ -186,7 +192,11 @@ class MPPIController:
                                             self._rollout_control_range["min"], self._rollout_control_range["max"])
 
             # Evolve states in vectorized form
-            rollout_current_states = self._evolve_state(rollout_current_states, rollout_current_u, self._dt)
+            if self.nn_dynamics:
+                nn_input = np.hstack((rollout_current_states, rollout_current_u))
+                rollout_current_states = self._evolve_state(nn_input)
+            else:
+                rollout_current_states = self._evolve_state(rollout_current_states, rollout_current_u, self._dt)
 
             # Calculate current time-step state cost
             rollout_cumcosts += self._state_cost(rollout_current_states)
