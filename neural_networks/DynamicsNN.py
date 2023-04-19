@@ -5,7 +5,7 @@ import os
 
 
 class DynamicsNN:
-    def __init__(self, ds, n_nodes, npz_data_path, save_dir):
+    def __init__(self, ds, n_nodes, npz_data_path, save_dir, learning_rate):
         self.system = ds
         self.n_nodes = n_nodes
 
@@ -16,6 +16,7 @@ class DynamicsNN:
             self.test_labels = data['y_test']
 
         self.save_dir = save_dir
+        self.learning_rate = learning_rate
 
     def build_and_compile_model(self, norm):
         model = tf.keras.Sequential([
@@ -26,7 +27,7 @@ class DynamicsNN:
         ], name="dynamics_nn")
 
         model.compile(loss=tf.keras.losses.mean_absolute_error,
-                      optimizer=tf.keras.optimizers.Adam(1e-2),
+                      optimizer=tf.keras.optimizers.Adam(self.learning_rate),
                       metrics=[tf.keras.losses.mean_absolute_error])
 
         model.summary()
@@ -41,11 +42,17 @@ class DynamicsNN:
 
         print("[DynamicsNN] [Info] Beginning training with {} epochs".format(n_epochs))
 
+        def schedule(epoch_idx, lr):
+            pass
+
+        callbacks = [tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=2)]
+
         history = dynamics_model.fit(
             self.train_examples,
             self.train_labels,
             validation_split=0.2,
-            verbose=1, epochs=n_epochs)
+            verbose=1, epochs=n_epochs,
+            callbacks=callbacks)
 
         dynamics_model.evaluate(self.test_examples, self.test_labels, verbose=1)
 

@@ -30,6 +30,7 @@ if __name__ == "__main__":
     nn = DynamicsNN(ds=inverted_pendulum,
                     n_nodes=32,
                     npz_data_path=dataset_fname,
-                    save_dir=file_dir + "/models")
+                    save_dir=file_dir + "/models",
+                    learning_rate=0.001)
 
-    nn.train(n_epochs=6)
+    nn.train(n_epochs=12)

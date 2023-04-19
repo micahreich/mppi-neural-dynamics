@@ -65,10 +65,10 @@ class MPPIController:
         self._last_control_seq = self._default_control_seq
 
         if self.nn_dynamics:
-            import tensorflow as tf
             self._evolve_state = evolve_state
         else:
             self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu),()->(nx)")
+
         self._terminal_cost = np.vectorize(terminal_cost, signature="(nx)->()")
         self._state_cost = np.vectorize(state_cost, signature="(nx)->()")
 
