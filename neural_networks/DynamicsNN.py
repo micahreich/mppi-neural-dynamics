@@ -7,6 +7,14 @@ import os
 class DynamicsNN:
     def __init__(self, ds, n_nodes, npz_data_path, save_dir, learning_rate):
         self.system = ds
+
+        try:
+            assert (self.system.nx % 2 == 0)
+        except AssertionError:
+            print("[DynamicsNN] [Error] System's state space must be partitioned"
+                  "into [x, x_dot] where |x| = |x_dot|")
+            exit()
+
         self.n_nodes = n_nodes
 
         with np.load(npz_data_path) as data:
@@ -23,7 +31,7 @@ class DynamicsNN:
             norm,
             tf.keras.layers.Dense(self.n_nodes, activation='relu'),
             tf.keras.layers.Dense(self.n_nodes, activation='relu'),
-            tf.keras.layers.Dense(self.system.nx)
+            tf.keras.layers.Dense(self.system.nx // 2)
         ], name="dynamics_nn")
 
         model.compile(loss=tf.keras.losses.mean_absolute_error,
@@ -52,6 +60,7 @@ class DynamicsNN:
             self.train_labels,
             validation_split=0.2,
             verbose=1, epochs=n_epochs,
+            batch_size=512,
             callbacks=callbacks)
 
         dynamics_model.evaluate(self.test_examples, self.test_labels, verbose=1)
@@ -66,3 +75,15 @@ class DynamicsNN:
             dynamics_model.save(dir_fname_string)
 
         return history
+
+
+class OnlineLearningDynamicsNN:
+    def __init__(self, dnn, online_lr):
+        self.dnn = dnn
+        tf.keras.backend.set_value(self.dnn.optimizer.learning_rate, online_lr)
+
+    def train_online(self, x, y):
+        self.dnn.fit(
+            x, y, verbose=0,
+            epochs=1, batch_size=len(x)
+        )

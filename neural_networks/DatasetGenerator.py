@@ -24,6 +24,14 @@ def npz_to_tf_dataset(npz_data_path):
 class DatasetGenerator:
     def __init__(self, ds, save_dir):
         self.system = ds
+
+        try:
+            assert (self.system.nx % 2 == 0)
+        except AssertionError:
+            print("[DatasetGenerator] [Error] System's state space must be partitioned"
+                  "into [x, x_dot] where |x| = |x_dot|")
+            exit()
+
         self.save_dir = save_dir
         self.latest_dataset_fname = None
 
@@ -43,7 +51,7 @@ class DatasetGenerator:
 
     def sample_state_action_pair(self, n_samples):
         data_x = np.empty(shape=(n_samples, self.system.nx + self.system.nu))
-        data_y = np.empty(shape=(n_samples, self.system.nx))
+        data_y = np.empty(shape=(n_samples, self.system.nx // 2))
 
         actions = self.sample_actions(n_samples, self.system.u_lo, self.system.u_hi)
         initial_states = self.sample_initial_states(n_samples, self.system.x_lo, self.system.x_hi)
@@ -54,8 +62,10 @@ class DatasetGenerator:
             dynamics_ode = self.system.dynamics(action)
             next_state = scipy.integrate.odeint(dynamics_ode, initial_state, np.array([0, self.system.dt]))[1]
 
+            acceleration = (next_state[self.system.nx // 2:] - initial_state[self.system.nx // 2:]) / self.system.dt
+
             data_x[i] = np.hstack((initial_state, action))
-            data_y[i] = next_state
+            data_y[i] = acceleration
 
         return data_x, data_y
 
