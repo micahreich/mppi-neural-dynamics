@@ -61,9 +61,6 @@ class MPPIController:
         self._exploration_cov = exploration_cov
         self._exploration_lambda = exploration_lambda
 
-        self._default_control_seq = np.zeros((self._horizon_length, self._nu))
-        self._last_control_seq = self._default_control_seq
-
         if self.nn_dynamics:
             self._evolve_state = evolve_state
         else:
@@ -78,7 +75,7 @@ class MPPIController:
             def default_control_cost(u, noise):
                 return self._exploration_lambda * np.dot(
                     u,
-                    np.dot(self._exploration_cov_inv, noise)
+                    np.dot(self._exploration_cov_inv, np.abs(noise))
                 )
 
             control_cost = default_control_cost
@@ -91,13 +88,22 @@ class MPPIController:
 
         if self._control_range is None:
             print("[MPPI] [Warn] No control range input. Assuming [-inf, inf] on all dimensions.")
+            self._default_control_seq = np.zeros((self._horizon_length, self._nu))
         else:
-            assert (self._control_range["min"].shape == self._control_range["min"].shape == (self._nu,))
+            assert (self._control_range["min"].shape == self._control_range["max"].shape == (self._nu,))
+            self._default_control_seq = np.empty((self._horizon_length, self._nu))
+
+            for i in range(self._nu):
+                self._default_control_seq[:, i] = np.random.uniform(low=self._control_range["min"][i],
+                                                                    high=self._control_range["max"][i],
+                                                                    size=self._horizon_length)
 
             self._rollout_control_range = {
                 "min": np.tile(self._control_range["min"].reshape(1, -1), (self._n_rollouts, 1)),
                 "max": np.tile(self._control_range["max"].reshape(1, -1), (self._n_rollouts, 1))
             }
+        self._last_control_seq = self._default_control_seq
+        print("initial last seq", self._last_control_seq)
 
     def score_rollouts(self, rollout_cumcosts):
         """
