@@ -64,7 +64,7 @@ class MPPIController:
         if self.nn_dynamics:
             self._evolve_state = evolve_state
         else:
-            self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu),()->(nx)")
+            self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu)->(nx)")
 
         self._terminal_cost = np.vectorize(terminal_cost, signature="(nx)->()")
         self._state_cost = np.vectorize(state_cost, signature="(nx)->()")
@@ -103,7 +103,6 @@ class MPPIController:
                 "max": np.tile(self._control_range["max"].reshape(1, -1), (self._n_rollouts, 1))
             }
         self._last_control_seq = self._default_control_seq
-        print("initial last seq", self._last_control_seq)
 
     def score_rollouts(self, rollout_cumcosts):
         """
@@ -202,7 +201,7 @@ class MPPIController:
                 nn_input = np.hstack((rollout_current_states, rollout_current_u))
                 rollout_current_states = self._evolve_state(nn_input)
             else:
-                rollout_current_states = self._evolve_state(rollout_current_states, rollout_current_u, self._dt)
+                rollout_current_states = self._evolve_state(rollout_current_states, rollout_current_u)
 
             # Calculate current time-step state cost
             rollout_cumcosts += self._state_cost(rollout_current_states)

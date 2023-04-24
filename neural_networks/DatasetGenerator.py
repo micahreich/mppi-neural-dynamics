@@ -22,7 +22,22 @@ def npz_to_tf_dataset(npz_data_path):
 
 
 class DatasetGenerator:
-    def __init__(self, ds, save_dir):
+    def __init__(self, ds, save_dir, sample_method="random singles"):
+        """
+        Dataset generator for neural dynamics models. Data produced by this API is trained with a
+        DNN to predict the acceleration of a dynamical system given the current state and control input
+
+        :param ds: dynamical system class from '/systems' directory
+        :param save_dir: directory to save the .npz dataset to
+        :param sample_method: method to use for data set sampling. Let n be the # of points in the dataset.
+
+        'random singles' indicates sampling n random initial states and actions, integrating the system forward by
+        dt, and using the resulting state to determine the state evolution.
+
+        'random rollouts' indicates sampling k initial states (where k = number of rollouts) and n random controls,
+        where each of the k initial states are rolled out (T = n // k) times, and each (x_t, x_{t+1}) pair is used
+        to determine the state evolutions.
+        """
         self.system = ds
 
         try:
@@ -34,6 +49,7 @@ class DatasetGenerator:
 
         self.save_dir = save_dir
         self.latest_dataset_fname = None
+        self.sample_method = sample_method
 
     def sample_actions(self, n_samples, u_lo, u_hi):
         actions = np.empty(shape=(n_samples, self.system.nu))
@@ -49,33 +65,73 @@ class DatasetGenerator:
             states[:, i] = np.random.uniform(low=x_lo[i], high=x_hi[i], size=n_samples)
         return states
 
-    def sample_state_action_pair(self, n_samples):
+    def sample_pairs(self, n_samples, horizon_length=None):
+
+        if self.sample_method == "random rollouts" and \
+           n_samples/horizon_length != n_samples//horizon_length:
+            rounded_n_samples = int(horizon_length * np.ceil(n_samples / horizon_length))
+
+            print("[DatasetGenerator] [Error] n_samples of {} does not generate a whole number of rollouts with "
+                  "rollout_length {}. "
+                  "Rounding n_samples up to {}".format(n_samples, horizon_length, rounded_n_samples))
+            n_samples = rounded_n_samples
+
         data_x = np.empty(shape=(n_samples, self.system.nx + self.system.nu))
         data_y = np.empty(shape=(n_samples, self.system.nx // 2))
 
-        actions = self.sample_actions(n_samples, self.system.u_lo, self.system.u_hi)
-        initial_states = self.sample_initial_states(n_samples, self.system.x_lo, self.system.x_hi)
+        if self.sample_method == "random singles":
+            initial_states = self.sample_initial_states(n_samples, self.system.x_lo, self.system.x_hi)
+            actions = self.sample_actions(n_samples, self.system.u_lo, self.system.u_hi)
 
-        for i in tqdm(range(n_samples)):
-            initial_state, action = initial_states[i], actions[i]
+            for i in tqdm(range(n_samples)):
+                initial_state, action = initial_states[i], actions[i]
 
-            dynamics_ode = self.system.dynamics(action)
-            next_state = scipy.integrate.odeint(dynamics_ode, initial_state, np.array([0, self.system.dt]))[1]
+                next_state = self.system.integrator.step(initial_state, action)
 
-            acceleration = (next_state[self.system.nx // 2:] - initial_state[self.system.nx // 2:]) / self.system.dt
+                acceleration = (next_state[1::2] - initial_state[1::2]) / self.system.dt
 
-            data_x[i] = np.hstack((initial_state, action))
-            data_y[i] = acceleration
+                data_x[i] = np.hstack((initial_state, action))
+                data_y[i] = acceleration
+
+        elif self.sample_method == "random rollouts":
+            n_rollouts = n_samples // horizon_length
+            print("[DatasetGenerator] [Info] Generating {} rollouts of length {}.".format(n_rollouts, horizon_length))
+
+            tstep_states = self.sample_initial_states(n_rollouts, self.system.x_lo, self.system.x_hi)
+
+            get_next_state = np.vectorize(self.system.integrator.step, signature="(nx),(nu)->(nx)")
+
+            for t in tqdm(range(horizon_length)):
+                tstep_actions = self.sample_actions(n_rollouts, self.system.u_lo, self.system.u_hi)
+                tstep_next_states = get_next_state(state=tstep_states, control=tstep_actions)
+
+                tstep_velocities = tstep_states[:, 1::2]
+                tstep_next_velocities = tstep_next_states[:, 1::2]
+
+                accelerations = (tstep_next_velocities - tstep_velocities) / self.system.dt
+
+                data_y[t * n_rollouts:(t + 1) * n_rollouts, :] = accelerations
+                data_x[t * n_rollouts:(t + 1) * n_rollouts, :] = np.hstack((tstep_states, tstep_actions))
+
+                tstep_states = tstep_next_states
+        else:
+            print("[DatasetGenerator] [Error] Invalid sample type.")
+            exit()
 
         return data_x, data_y
 
-    def generate_dataset(self, n_samples, train_percentage, name=None):
+    def generate_dataset(self, n_samples, train_percentage, name=None, horizon_length=None):
+        if self.sample_method == "random rollouts" and not horizon_length:
+            print("[DatasetGenerator] [Error] For sample_method = 'random rollouts', horizon_length must be of type"
+                  " int > 0")
+            exit()
+
         print("[DatasetGenerator] [Info] Generating {} samples with: {:.1f}% train {:.1f}% test".format(
             n_samples,
             train_percentage * 100,
             (1 - train_percentage) * 100))
 
-        data_x, data_y = self.sample_state_action_pair(n_samples)
+        data_x, data_y = self.sample_pairs(n_samples, horizon_length)
 
         if not os.path.isdir(self.save_dir):
             os.mkdir(self.save_dir)
@@ -87,13 +143,13 @@ class DatasetGenerator:
             x_test, y_test = data_x[n_train_samples:], data_y[n_train_samples:]
 
             dt_string = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-            dir_fname_string = "{}/{}_data_{}".format(self.save_dir, str(self.system), dt_string)
+            dir_fname_string = "{}/{}-{}-samples__{}".format(self.save_dir, str(self.system), n_samples, dt_string)
 
             if name:
-                dir_fname_string = "{}/{}_{}".format(self.save_dir, name, dt_string)
+                dir_fname_string = "{}/{}__{}".format(self.save_dir, name, dt_string)
 
             np.savez(dir_fname_string, x_train=x_train, y_train=y_train,
-                                       x_test=x_test, y_test=y_test)
+                     x_test=x_test, y_test=y_test)
 
             file_size = os.path.getsize("{}.npz".format(dir_fname_string))
             print("[DatasetGenerator] [Info] Saved {} dataset with size {} MB".format(str(self.system),
