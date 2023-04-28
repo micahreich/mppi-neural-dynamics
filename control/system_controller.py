@@ -1,18 +1,26 @@
 import sys
 sys.path.append("..")
 
-from MPPIController import MPPIController, ControlNoiseInit
+from mppi_controller import MPPIController, ControlNoiseInit
+import numpy as np
 
 
 class SystemController:
     def __init__(self, ds,
                  n_rollouts, horizon_length, exploration_cov, exploration_lambda,
                  state_cost, terminal_cost, control_cost=None,
-                 nn_model=None, control_range=None, control_noise_initialization=ControlNoiseInit.RANDOM):
-        evolve_state = ds.integrator.step
-        nn_dynamics = False
+                 nn_model=None, control_range=None, control_noise_initialization=ControlNoiseInit.RANDOM,
+                 include_null_controls=True, inverse_dyn_control=False):
+        self.ds = ds
+        self.inverse_dyn_control = inverse_dyn_control
+        self.nn_model = nn_model
 
-        if nn_model is not None:
+        # Default is forward dynamics with dynamics simulation inside MPC
+        evolve_state = ds.integrator.step
+        nn_dynamics = evolve_state_batched = False
+
+        if nn_model is not None and not inverse_dyn_control:
+            # Forward dynamics with dynamics simulation inside MPC using NN for dynamics model
             nn_dynamics = True
 
             def nn_evolve_state(nn_input):
@@ -28,6 +36,13 @@ class SystemController:
                 return next_states
 
             evolve_state = nn_evolve_state
+            evolve_state_batched = True
+
+        elif nn_model is None and inverse_dyn_control:
+            # Inverse dynamics control, kinematic simulation inside MPC and forward dynamics outside controller, using
+            # derived inverse dynamics
+            evolve_state = ds.kinematic_evolve_state
+            evolve_state_batched = True
 
         self.controller = MPPIController(
             n_rollouts=n_rollouts,
@@ -43,7 +58,25 @@ class SystemController:
             dt=ds.dt,
             control_range=control_range,
             control_noise_initialization=control_noise_initialization,
-            nn_dynamics=nn_dynamics
+            nn_dynamics=nn_dynamics,
+            include_null_controls=include_null_controls,
+            evolve_state_batched=evolve_state_batched
         )
 
     def build(self): return self.controller
+
+    def step(self, state, ensure_control=False):
+        # If in default mode, result is the direct control input, i.e. torques, otherwise is accelerations for
+        # inverse dynamics control mode
+        result = self.controller.step(state)
+
+        if self.inverse_dyn_control:
+            if self.nn_model is not None:
+                pass
+            else:
+                result = self.ds.inverse_dynamics(result, state)
+
+        if not ensure_control:
+            return result
+
+        return self.ds.ensure_control(result)

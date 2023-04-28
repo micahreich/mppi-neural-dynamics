@@ -19,7 +19,9 @@ class MPPIController:
                  n_realized_controls=1,
                  control_range=None,
                  control_cost=None,
-                 nn_dynamics=False):
+                 nn_dynamics=False,
+                 include_null_controls=True,
+                 evolve_state_batched=False):
         """
          Model Predictive Path Integral Controller based on [1], [2]
 
@@ -45,7 +47,7 @@ class MPPIController:
         :param control_noise_initialization: Method with which to initialize new control sequences
         :param n_realized_controls: Number of elements of the control sequence to be returned and executed on the
         system before resampling the control sequence
-        :param control_range: Dict[str, (nu,)] with keys "min", "max", and "mean" indicating the min, max, and mean
+        :param control_range: Dict[str, (nu,)] with keys "min", "max"indicating the min, max
         of control values to use in prediction
         """
         self.nn_dynamics = nn_dynamics
@@ -55,13 +57,17 @@ class MPPIController:
         self._dt = dt
 
         self._n_rollouts = n_rollouts
+        self.include_null_controls = include_null_controls
+        if self.include_null_controls:
+            self._n_rollouts += 1
+
         self._horizon_length = horizon_length
 
         assert (exploration_cov.shape == (self._nu, self._nu))
         self._exploration_cov = exploration_cov
         self._exploration_lambda = exploration_lambda
 
-        if self.nn_dynamics:
+        if self.nn_dynamics or evolve_state_batched:
             self._evolve_state = evolve_state
         else:
             self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu)->(nx)")
@@ -129,9 +135,6 @@ class MPPIController:
         :return: Modified control sequence incorporating the control noise, favoring high-scoring  perturbations
         """
 
-        assert (rollout_noise_u.shape == (self._n_rollouts, self._nu, self._horizon_length) and
-                weights.shape == (self._n_rollouts,))
-
         weights = np.tile(weights.reshape((-1, 1, 1)), (1, self._nu, self._horizon_length))
         weighted_noise_u = rollout_noise_u * weights
         weighted_noise_u = np.sum(weighted_noise_u, axis=0).T
@@ -181,14 +184,21 @@ class MPPIController:
         rollout_current_states = np.tile(state, (self._n_rollouts, 1))
         rollout_cumcosts = np.zeros(self._n_rollouts)
 
+        # Shape for rollouts_noise_u.shape == (n_rollouts, nu, horizon_length)
         rollouts_noise_u = np.random.multivariate_normal(mean=np.zeros(self._nu),
                                                          cov=self._exploration_cov,
                                                          size=(self._n_rollouts, self._horizon_length)).swapaxes(1, 2)
 
+        # Shape for rollouts_nominal_u.shape == (n_rollouts, nu, horizon_length)
+        rollouts_nominal_u = self._last_control_seq.T.reshape((1, -1, self._horizon_length))
+        rollouts_nominal_u = np.tile(rollouts_nominal_u, (self._n_rollouts, 1, 1))
+
+        if self.include_null_controls:
+            rollouts_noise_u[-1, :, :] = -rollouts_nominal_u[-1, :, :]
+
         for t in range(0, self._horizon_length):
             rollout_noise_u = rollouts_noise_u[:, :, t]
-            rollout_nominal_u = np.tile(self._last_control_seq[t].reshape(1, -1),
-                                        (self._n_rollouts, 1))
+            rollout_nominal_u = rollouts_nominal_u[:, :, t]
 
             rollout_current_u = rollout_nominal_u + rollout_noise_u
 

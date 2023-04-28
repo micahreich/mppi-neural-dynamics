@@ -1,2 +1,2 @@
-from .DatasetGenerator import DatasetGenerator
-from .DynamicsNN import DynamicsNN, OnlineLearningDynamicsNN
+from .dataset_generator import DatasetGenerator
+from .dynamics_networks import DynamicsNN, TransferNN

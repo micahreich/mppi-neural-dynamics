@@ -4,8 +4,43 @@ from datetime import datetime
 import os
 
 
+class TransferNN:
+    def __init__(self, base_model, lr):
+        self.base_model = base_model
+        self.transfer_model = self.build_and_compile_model(lr)
+
+    def build_and_compile_model(self, lr):
+        base_model = self.base_model
+        base_model.trainable = False
+
+        out = tf.keras.layers.Dense(16, activation='tanh', name="transfer_layer")(base_model.layers[-2].output)
+        out = tf.keras.layers.Dense(base_model.layers[-1].units, name="out_layer")(out)
+
+        transfer_learning_model = tf.keras.models.Model(
+            inputs=base_model.input, outputs=out, name="transfer_learning_dynamics_nn"
+        )
+
+        transfer_learning_model.compile(
+            loss=tf.keras.losses.mean_absolute_error,
+            optimizer=tf.keras.optimizers.Adam(lr)
+        )
+        transfer_learning_model.summary()
+
+        return transfer_learning_model
+
+    def train(self, x_data, y_data, n_epochs=1, verbose=0):
+        history = self.transfer_model.fit(
+            x_data,
+            y_data,
+            verbose=verbose, epochs=n_epochs,
+            batch_size=len(x_data),
+        )
+
+        return history
+
+
 class DynamicsNN:
-    def __init__(self, ds, n_nodes, save_dir, learning_rate):
+    def __init__(self, ds, n_nodes, save_dir, decay_steps=None):
         self.system = ds
 
         try:
@@ -19,7 +54,7 @@ class DynamicsNN:
         self.train_examples, self.train_labels, self.test_examples, self.test_labels = [None] * 4
 
         self.save_dir = save_dir
-        self.learning_rate = learning_rate
+        self.decay_steps = decay_steps
 
     def load_dataset(self, npz_data_path):
         with np.load(npz_data_path) as data:
@@ -28,33 +63,39 @@ class DynamicsNN:
             self.test_examples = data['x_test']
             self.test_labels = data['y_test']
 
-    def build_and_compile_model(self, norm):
+    def build_and_compile_model(self, norm, lr, cosine_lr=True):
         model = tf.keras.Sequential([
             norm,
-            tf.keras.layers.Dense(self.n_nodes, activation='relu'),
-            tf.keras.layers.Dense(self.n_nodes, activation='relu'),
+            tf.keras.layers.Dense(self.n_nodes, activation='tanh'),
+            tf.keras.layers.Dense(self.n_nodes, activation='tanh'),
             tf.keras.layers.Dense(self.system.nx // 2)
         ], name="dynamics_nn")
 
+        if cosine_lr:
+            assert self.decay_steps > 0
+
+            lr = tf.keras.optimizers.schedules.CosineDecay(lr, self.decay_steps)
+
         model.compile(loss=tf.keras.losses.mean_absolute_error,
-                      optimizer=tf.keras.optimizers.Adam(self.learning_rate),
+                      optimizer=tf.keras.optimizers.Adam(lr),
                       metrics=[tf.keras.losses.mean_absolute_error])
 
         model.summary()
 
         return model
 
-    def train(self, npz_data_path, n_epochs=100, save_model=True, name=None):
+    def train(self, npz_data_path, n_epochs=100, lr=1e-3,
+              save_model=True, name=None, patience=3, cosine_lr=True):
         self.load_dataset(npz_data_path)
 
         normalizer = tf.keras.layers.Normalization(axis=-1)
         normalizer.adapt(np.array(self.train_examples))
 
-        dynamics_model = self.build_and_compile_model(normalizer)
+        dynamics_model = self.build_and_compile_model(normalizer, lr=lr, cosine_lr=cosine_lr)
 
         print("[DynamicsNN] [Info] Beginning training with {} epochs".format(n_epochs))
 
-        callbacks = [tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=3)]
+        callbacks = [tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=patience)]
 
         history = dynamics_model.fit(
             self.train_examples,
@@ -78,15 +119,3 @@ class DynamicsNN:
             dynamics_model.save(dir_fname_string)
 
         return history
-
-
-class OnlineLearningDynamicsNN:
-    def __init__(self, dnn, online_lr):
-        self.dnn = dnn
-        tf.keras.backend.set_value(self.dnn.optimizer.learning_rate, online_lr)
-
-    def train_online(self, x, y):
-        self.dnn.fit(
-            x, y, verbose=0,
-            epochs=1, batch_size=len(x)
-        )

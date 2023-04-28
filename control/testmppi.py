@@ -1,4 +1,4 @@
-import MPPIController
+import mppi_controller
 import numpy as np
 import time
 import matplotlib.pyplot as plt
@@ -20,7 +20,7 @@ class InvertedPendulum:
         self.dt = dt
         self.nx, self.nu = (2, 1)
 
-        self.controller = MPPIController.MPPIController(
+        self.controller = mppi_controller.MPPIController(
             n_rollouts=200,
             horizon_length=10,
             exploration_cov=np.diag([1.5 ** 2]),
@@ -32,7 +32,7 @@ class InvertedPendulum:
             evolve_state=self.evolve_state,
             dt=dt,
             control_range={"min": np.array([-15]), "max": np.array([15])},
-            control_noise_initialization=MPPIController.ControlNoiseInit.LAST
+            control_noise_initialization=mppi_controller.ControlNoiseInit.LAST
         )
 
         self.measurement_noise_cov = np.array([

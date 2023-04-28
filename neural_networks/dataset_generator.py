@@ -51,6 +51,8 @@ class DatasetGenerator:
         self.latest_dataset_fname = None
         self.sample_method = sample_method
 
+        self.ensure_state = np.vectorize(ds.ensure_state, signature="(nx)->(nx)")
+
     def sample_actions(self, n_samples, u_lo, u_hi):
         actions = np.empty(shape=(n_samples, self.system.nu))
 
@@ -97,13 +99,15 @@ class DatasetGenerator:
             n_rollouts = n_samples // horizon_length
             print("[DatasetGenerator] [Info] Generating {} rollouts of length {}.".format(n_rollouts, horizon_length))
 
-            tstep_states = self.sample_initial_states(n_rollouts, self.system.x_lo, self.system.x_hi)
+            tstep_states = self.ensure_state(
+                self.sample_initial_states(n_rollouts, self.system.x_lo, self.system.x_hi)
+            )
 
             get_next_state = np.vectorize(self.system.integrator.step, signature="(nx),(nu)->(nx)")
 
             for t in tqdm(range(horizon_length)):
                 tstep_actions = self.sample_actions(n_rollouts, self.system.u_lo, self.system.u_hi)
-                tstep_next_states = get_next_state(state=tstep_states, control=tstep_actions)
+                tstep_next_states = self.ensure_state(get_next_state(state=tstep_states, control=tstep_actions))
 
                 tstep_velocities = tstep_states[:, 1::2]
                 tstep_next_velocities = tstep_next_states[:, 1::2]
