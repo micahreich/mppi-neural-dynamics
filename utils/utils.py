@@ -20,7 +20,8 @@ class Simulator:
         self.controller = controller
 
     def run(self, simulation_length, initial_state,
-            controlled=False, measurement_noise=False, save_fname=None):
+            controlled=False, measurement_noise=False, save_fname=None,
+            control_action=None, debug=False):
 
         if self.controller is None:
             controlled = False
@@ -34,10 +35,12 @@ class Simulator:
         start_time = perf_counter()
 
         for i in range(0, n_steps):
-            if not controlled:
+            if control_action is not None:
+                action = control_action
+            elif not controlled:
                 action = self.ds.null_action
             else:
-                action = self.controller.step(current_state)
+                action = self.controller.step(current_state, debug=debug)
 
             current_state = self.ds.simulator(current_state, action,
                                               measurement_noise=measurement_noise)
@@ -50,9 +53,9 @@ class Simulator:
         print("[Simulator] [Info] {} simulation elapsed time: {:.5f} s".format(str(self.ds), end_time - start_time))
 
         if save_fname: self.save(states, controls, save_fname)
-        time_points = time = np.linspace(0, simulation_length, n_steps)
+        times = np.linspace(0, simulation_length, n_steps)
 
-        return states, controls, time_points
+        return states, controls, times
 
     def save(self, states, controls, save_fname):
         np.savez(save_fname, states=states, controls=controls)
@@ -97,3 +100,56 @@ class Euler:
         update[1::2] += q_ddot * self.dt
 
         return state + update
+
+
+class Path:
+    def __init__(self, parametric_eqn, time_length):
+        """
+        General path class as defined by a parametric curve which takes inputs from [0, 1] and
+        returns the output in the workspace.
+
+        :param parametric_eqn: function: (float) -> (nx)
+        :param time_length: The amount of time in seconds over which the path should be followed
+        """
+        self.parametric_eqn = parametric_eqn
+        self.time_length = time_length
+
+    def get_points(self, times):
+        n_pts = len(times)
+        point_shape = self.parametric_eqn(0).shape[0]
+
+        points = np.empty(shape=(n_pts, point_shape))
+
+        for (i, t) in enumerate(times):
+            points[i] = self.__call__(t)
+
+        return points
+    
+    def __call__(self, t):
+        if t > self.time_length:
+            return self.parametric_eqn(1)
+        return self.parametric_eqn(t / self.time_length)
+
+
+class Trajectory(Path):
+    def __init__(self, position_parametric_eqn, velocity_parametric_eqn, time_length):
+        self.position_parametric_eqn = position_parametric_eqn
+        self.velocity_parametric_eqn = velocity_parametric_eqn
+        self.time_length = self.time_length
+
+        super().__init__(position_parametric_eqn, time_length)
+
+    def trapezoidal_velocity_profile(self, v_max, a_max):
+        risen_time = v_max / a_max
+
+        def velocity_parametric_eqn(t):
+            if 0 <= t <= risen_time:
+                return a_max * t
+            elif risen_time < t < self.time_length - risen_time:
+                return v_max
+            elif self.time_length - risen_time <= t <= self.time_length:
+                return -a_max * (t - self.time_length - risen_time) - v_max
+            else:
+                return 0
+
+        return velocity_parametric_eqn

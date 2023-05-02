@@ -11,6 +11,7 @@ class ControlNoiseInit(Enum):
 
 class MPPIController:
     def __init__(self, n_rollouts: int, horizon_length: int, exploration_cov: np.ndarray, exploration_lambda: float,
+                 alpha_mu: float, alpha_sigma: float,
                  nx: int, nu: int,
                  terminal_cost, state_cost,
                  evolve_state,
@@ -66,6 +67,8 @@ class MPPIController:
         assert (exploration_cov.shape == (self._nu, self._nu))
         self._exploration_cov = exploration_cov
         self._exploration_lambda = exploration_lambda
+        self._alpha_mu = alpha_mu
+        self._alpha_sigma = alpha_sigma
 
         if self.nn_dynamics or evolve_state_batched:
             self._evolve_state = evolve_state
@@ -78,15 +81,20 @@ class MPPIController:
         self._exploration_cov_inv = np.linalg.inv(self._exploration_cov)
 
         if not control_cost:
-            def default_control_cost(u, noise):
-                return self._exploration_lambda * np.dot(
-                    u,
-                    np.dot(self._exploration_cov_inv, np.abs(noise))
-                )
+            # def default_control_cost(u, noise):
+            #     R = np.diag(np.ones(self._nu))
+            #     return np.dot(u, )
+            #     return self._exploration_lambda * np.dot(
+            #         u,
+            #         np.dot(self._exploration_cov_inv, np.abs(noise))
+            #     )
+            def default_control_cost(u):
+                return np.dot(u, u)
 
             control_cost = default_control_cost
 
-        self._control_cost = np.vectorize(control_cost, signature="(nu),(nu)->()")
+        # self._control_cost = np.vectorize(control_cost, signature="(nu),(nu)->()")
+        self._control_cost = np.vectorize(control_cost, signature="(nu)->()")
 
         self._control_noise_initialization = control_noise_initialization
         self._n_realized_controls = n_realized_controls
@@ -108,7 +116,11 @@ class MPPIController:
                 "min": np.tile(self._control_range["min"].reshape(1, -1), (self._n_rollouts, 1)),
                 "max": np.tile(self._control_range["max"].reshape(1, -1), (self._n_rollouts, 1))
             }
+
         self._last_control_seq = self._default_control_seq
+
+        self._last_cov_seq = np.tile(self._exploration_cov.reshape((self._nu, self._nu, 1)),
+                                     (1, 1, self._horizon_length))
 
     def score_rollouts(self, rollout_cumcosts):
         """
@@ -121,12 +133,12 @@ class MPPIController:
         assert (rollout_cumcosts.shape == (self._n_rollouts,))
 
         beta = min(rollout_cumcosts)
-        scores = np.exp(-1 / self._exploration_lambda * (rollout_cumcosts - beta))
+        scores = np.exp((-1 / self._exploration_lambda) * (rollout_cumcosts - beta))
 
         scores_sum = np.sum(scores)
         return (1 / scores_sum) * scores
 
-    def weight_rollout_noise(self, rollout_noise_u, weights):
+    def update_nominal_u(self, rollouts_u, weights):
         """
         Add weighted control noise to nominal control sequence to get new, optimized control sequence
 
@@ -134,12 +146,48 @@ class MPPIController:
         :param weights: Weights for each rollout
         :return: Modified control sequence incorporating the control noise, favoring high-scoring  perturbations
         """
+        updated_u_seq = np.empty_like(self._last_control_seq)
 
-        weights = np.tile(weights.reshape((-1, 1, 1)), (1, self._nu, self._horizon_length))
-        weighted_noise_u = rollout_noise_u * weights
-        weighted_noise_u = np.sum(weighted_noise_u, axis=0).T
+        for t in range(0, self._horizon_length):
+            tstep_u = np.zeros_like(self._last_control_seq[0])
 
-        return self._last_control_seq + weighted_noise_u
+            for i in range(0, self._n_rollouts):
+                tstep_u += weights[i] * rollouts_u[i, :, t]
+
+            updated_u_seq[t] = self._alpha_mu * self._last_control_seq[t] + \
+                              (1 - self._alpha_mu) * tstep_u
+
+        return updated_u_seq
+
+        #
+        # weights = np.tile(weights.reshape((-1, 1, 1)), (1, self._nu, self._horizon_length))
+        # weighted_u = rollouts_u * weights
+        # weighted_u = np.sum(weighted_u, axis=0).T
+        #
+        # mu = self._last_control_seq
+        #
+        # return self._alpha_mu * mu + (1 - self._alpha_mu) * weighted_u
+
+    def update_exploration_cov(self, rollouts_u, weights):
+        rollouts_nominal_u = self._last_control_seq.T.reshape((1, -1, self._horizon_length))
+
+        rollouts_nominal_u = np.tile(rollouts_nominal_u, (self._n_rollouts, 1, 1))
+
+        rollouts_mu_diff = rollouts_u - rollouts_nominal_u
+        updated_cov_seq = np.empty_like(self._last_cov_seq)
+
+        for t in range(0, self._horizon_length):
+            tstep_cov = np.zeros_like(self._last_cov_seq[:, :, 0])
+
+            for i in range(0, self._n_rollouts):
+                u_d = (rollouts_u[i, :, t] - self._last_control_seq[t]).reshape((-1, 1))
+                rollout_i_step_t_cov = weights[i] * (u_d @ u_d.T)
+                tstep_cov += rollout_i_step_t_cov
+
+            updated_cov_seq[:, :, t] = self._alpha_sigma * self._last_cov_seq[:, :, t] + \
+                                       (1 - self._alpha_sigma) * tstep_cov
+
+        return updated_cov_seq
 
     def shift_control_seq(self, control_seq):
         """
@@ -164,7 +212,13 @@ class MPPIController:
         control_seq[-1] = new_controls
         return control_seq
 
-    def step(self, state):
+    def shift_cov_seq(self, cov_seq):
+        new_cov_seq = np.roll(cov_seq, -1, axis=2)
+        new_cov_seq[:, :, -1] = new_cov_seq[:, :, -2]
+
+        return new_cov_seq
+
+    def step(self, state, debug=False):
         """
         Perform a single step of the MPPI controller.
         Step generates random control noise, evolves the state using the last control sequence and the random
@@ -185,22 +239,33 @@ class MPPIController:
         rollout_cumcosts = np.zeros(self._n_rollouts)
 
         # Shape for rollouts_noise_u.shape == (n_rollouts, nu, horizon_length)
-        rollouts_noise_u = np.random.multivariate_normal(mean=np.zeros(self._nu),
-                                                         cov=self._exploration_cov,
-                                                         size=(self._n_rollouts, self._horizon_length)).swapaxes(1, 2)
+        # rollouts_noise_u = np.random.multivariate_normal(mean=np.zeros(self._nu),
+        #                                                  cov=self._exploration_cov,
+        #                                                  size=(self._n_rollouts, self._horizon_length)).swapaxes(1, 2)
+        #
+        # # Shape for rollouts_nominal_u.shape == (n_rollouts, nu, horizon_length)
+        # rollouts_nominal_u = self._last_control_seq.T.reshape((1, -1, self._horizon_length))
+        # rollouts_nominal_u = np.tile(rollouts_nominal_u, (self._n_rollouts, 1, 1))
+        #
+        # rollouts_u = rollouts_nominal_u + rollouts_noise_u
 
-        # Shape for rollouts_nominal_u.shape == (n_rollouts, nu, horizon_length)
-        rollouts_nominal_u = self._last_control_seq.T.reshape((1, -1, self._horizon_length))
-        rollouts_nominal_u = np.tile(rollouts_nominal_u, (self._n_rollouts, 1, 1))
+        rollouts_u = np.empty(shape=(self._n_rollouts, self._nu, self._horizon_length))
 
-        if self.include_null_controls:
-            rollouts_noise_u[-1, :, :] = -rollouts_nominal_u[-1, :, :]
-
+        # if self.include_null_controls:
+        #     rollouts_noise_u[-1, :, :] = -rollouts_nominal_u[-1, :, :]
+        # print("cov mean", np.mean(self._last_cov_seq))
         for t in range(0, self._horizon_length):
-            rollout_noise_u = rollouts_noise_u[:, :, t]
-            rollout_nominal_u = rollouts_nominal_u[:, :, t]
+            # Generate control noise
+            rollout_current_noise = np.random.multivariate_normal(
+                mean=np.zeros(self._nu),
+                cov=self._last_cov_seq[:, :, t],
+                size=self._n_rollouts)
+            
+            # Add control noise to last control sequence -- mu
+            rollout_current_mu = np.tile(self._last_control_seq[t], (self._n_rollouts, 1))
+            rollout_current_u = rollout_current_mu + rollout_current_noise
 
-            rollout_current_u = rollout_nominal_u + rollout_noise_u
+            rollouts_u[:, :, t] = rollout_current_u
 
             if self._control_range:
                 rollout_current_u = np.clip(rollout_current_u,
@@ -217,14 +282,22 @@ class MPPIController:
             rollout_cumcosts += self._state_cost(rollout_current_states)
 
             # Calculate current time-step control cost
-            rollout_cumcosts += self._control_cost(rollout_nominal_u, rollout_noise_u)
+            rollout_cumcosts += self._control_cost(rollout_current_u)
 
         # Calculate terminal cost
         rollout_cumcosts += self._terminal_cost(rollout_current_states)
 
         # Weight control noise and add to last nominal control sequence
         rollout_scores = self.score_rollouts(rollout_cumcosts)
-        self._last_control_seq = self.weight_rollout_noise(rollouts_noise_u, weights=rollout_scores)
+        
+        if debug:
+            print("> Step controller:\n"
+                  "  Rollouts -- mean: {}, var: {}, min: {}, max: {}\n".format(
+                np.mean(rollout_scores), np.var(rollout_scores), np.min(rollout_scores), np.max(rollout_scores)
+            ))
+        
+        self._last_control_seq = self.update_nominal_u(rollouts_u, weights=rollout_scores)
+        self._last_cov_seq = self.update_exploration_cov(rollouts_u, weights=rollout_scores)
 
         # Roll forward the nominal controls and return the first action
         u0 = self._last_control_seq[0]
@@ -233,5 +306,6 @@ class MPPIController:
             u0 = np.clip(u0, self._control_range["min"], self._control_range["max"])
 
         self._last_control_seq = self.shift_control_seq(self._last_control_seq)
+        self._last_cov_seq = self.shift_cov_seq(self._last_cov_seq)
 
         return u0

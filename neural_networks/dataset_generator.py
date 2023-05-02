@@ -22,7 +22,7 @@ def npz_to_tf_dataset(npz_data_path):
 
 
 class DatasetGenerator:
-    def __init__(self, ds, save_dir, sample_method="random singles"):
+    def __init__(self, ds, save_dir, sample_method="random singles", inverse_dynamics=False):
         """
         Dataset generator for neural dynamics models. Data produced by this API is trained with a
         DNN to predict the acceleration of a dynamical system given the current state and control input
@@ -30,6 +30,8 @@ class DatasetGenerator:
         :param ds: dynamical system class from '/systems' directory
         :param save_dir: directory to save the .npz dataset to
         :param sample_method: method to use for data set sampling. Let n be the # of points in the dataset.
+        :param inverse_dynamics: indicate whether training an inverse dynamics model. If true, we must use
+        random singles generation method
 
         'random singles' indicates sampling n random initial states and actions, integrating the system forward by
         dt, and using the resulting state to determine the state evolution.
@@ -51,21 +53,28 @@ class DatasetGenerator:
         self.latest_dataset_fname = None
         self.sample_method = sample_method
 
-        self.ensure_state = np.vectorize(ds.ensure_state, signature="(nx)->(nx)")
+        self.batched_ensure_state = np.vectorize(self.system.ensure_state, signature="(nx)->(nx)")
+        self.batched_next_state = np.vectorize(self.system.integrator.step, signature="(nx),(nu)->(nx)")
+
+        self.inverse_dynamics = inverse_dynamics
+        if self.inverse_dynamics:
+            self.batched_inverse_dynamics = np.vectorize(self.system.inverse_dynamics, signature="(nx),(nu)->(nu)")
+        
+    def _uniform_2d_bycol(self, nr, nc, lo, hi):
+        x = np.empty(shape=(nr, nc))
+
+        for i in range(nc):
+            x[:, i] = np.random.uniform(low=lo[i], high=hi[i], size=nr)
+        return x
 
     def sample_actions(self, n_samples, u_lo, u_hi):
-        actions = np.empty(shape=(n_samples, self.system.nu))
-
-        for i in range(self.system.nu):
-            actions[:, i] = np.random.uniform(low=u_lo[i], high=u_hi[i], size=n_samples)
-        return actions
+        return self._uniform_2d_bycol(nr=n_samples, nc=self.system.nu, lo=u_lo, hi=u_hi)
 
     def sample_initial_states(self, n_samples, x_lo, x_hi):
-        states = np.empty(shape=(n_samples, self.system.nx))
-
-        for i in range(self.system.nx):
-            states[:, i] = np.random.uniform(low=x_lo[i], high=x_hi[i], size=n_samples)
-        return states
+        return self._uniform_2d_bycol(nr=n_samples, nc=self.system.nx, lo=x_lo, hi=x_hi)
+    
+    # def sample_accelerations(self, n_samples, a_lo, a_hi):
+    #     return self._uniform_2d_bycol(nr=n_samples, nc=self.system.nu, lo=a_lo, hi=a_hi)
 
     def sample_pairs(self, n_samples, horizon_length=None):
 
@@ -82,40 +91,73 @@ class DatasetGenerator:
         data_y = np.empty(shape=(n_samples, self.system.nx // 2))
 
         if self.sample_method == "random singles":
-            initial_states = self.sample_initial_states(n_samples, self.system.x_lo, self.system.x_hi)
-            actions = self.sample_actions(n_samples, self.system.u_lo, self.system.u_hi)
+            initial_states = self.batched_ensure_state(
+                self.sample_initial_states(n_samples, self.system.x_lo, self.system.x_hi)
+            )
+            
+            if self.inverse_dynamics:
+                actions = self.sample_actions(n_samples, self.system.accel_lo, self.system.accel_hi)
+                torques = self.batched_inverse_dynamics(initial_states, actions)
 
-            for i in tqdm(range(n_samples)):
-                initial_state, action = initial_states[i], actions[i]
+                data_x = np.hstack((initial_states, actions))
+                data_y = torques
+            else:
+                actions = self.sample_actions(n_samples, self.system.u_lo, self.system.u_hi)
+                next_states = self.batched_next_state(initial_states, actions)
 
-                next_state = self.system.integrator.step(initial_state, action)
+                accelerations = (next_states[:, 1::2] - initial_states[:, 1::2]) / self.system.dt
 
-                acceleration = (next_state[1::2] - initial_state[1::2]) / self.system.dt
+                data_x = np.hstack((initial_states, actions))
+                data_y = accelerations
+            
+            # for i in tqdm(range(n_samples)):
+            #     initial_state, action = tstep_states[i], actions[i]
 
-                data_x[i] = np.hstack((initial_state, action))
-                data_y[i] = acceleration
+            #     if self.inverse_dynamics:
+            #         torque = self.system.inverse_dynamics(initial_state, action)
+            #         next_state = self.system.integrator.step(initial_state, torque)
 
+            #         data_x[i] = np.hstack((initial_state, action))
+            #         data_y[i] = torque
+            #     else:
+            #         next_state = self.system.integrator.step(initial_state, action)
+
+            #         acceleration = (next_state[1::2] - initial_state[1::2]) / self.system.dt
+
+            #         data_x[i] = np.hstack((initial_state, action))
+            #         data_y[i] = acceleration
         elif self.sample_method == "random rollouts":
             n_rollouts = n_samples // horizon_length
             print("[DatasetGenerator] [Info] Generating {} rollouts of length {}.".format(n_rollouts, horizon_length))
 
-            tstep_states = self.ensure_state(
+            tstep_states = self.batched_ensure_state(
                 self.sample_initial_states(n_rollouts, self.system.x_lo, self.system.x_hi)
             )
 
-            get_next_state = np.vectorize(self.system.integrator.step, signature="(nx),(nu)->(nx)")
-
             for t in tqdm(range(horizon_length)):
-                tstep_actions = self.sample_actions(n_rollouts, self.system.u_lo, self.system.u_hi)
-                tstep_next_states = self.ensure_state(get_next_state(state=tstep_states, control=tstep_actions))
+                if self.inverse_dynamics:
+                    tstep_actions = self.sample_actions(n_rollouts, self.system.accel_lo, self.system.accel_hi)
+                    tstep_torques = self.batched_inverse_dynamics(tstep_states, tstep_actions)
 
-                tstep_velocities = tstep_states[:, 1::2]
-                tstep_next_velocities = tstep_next_states[:, 1::2]
+                    tstep_next_states = self.batched_ensure_state(
+                        self.batched_next_state(tstep_states, tstep_torques)
+                    )
 
-                accelerations = (tstep_next_velocities - tstep_velocities) / self.system.dt
+                    data_x[t * n_rollouts:(t + 1) * n_rollouts, :] = np.hstack((tstep_states, tstep_actions))
+                    data_y[t * n_rollouts:(t + 1) * n_rollouts, :] = tstep_torques
+                else:
+                    tstep_actions = self.sample_actions(n_rollouts, self.system.u_lo, self.system.u_hi)
+                    tstep_next_states = self.batched_ensure_state(
+                        self.batched_next_state(state=tstep_states, control=tstep_actions)
+                    )
 
-                data_y[t * n_rollouts:(t + 1) * n_rollouts, :] = accelerations
-                data_x[t * n_rollouts:(t + 1) * n_rollouts, :] = np.hstack((tstep_states, tstep_actions))
+                    tstep_velocities = tstep_states[:, 1::2]
+                    tstep_next_velocities = tstep_next_states[:, 1::2]
+
+                    accelerations = (tstep_next_velocities - tstep_velocities) / self.system.dt
+
+                    data_x[t * n_rollouts:(t + 1) * n_rollouts, :] = np.hstack((tstep_states, tstep_actions))
+                    data_y[t * n_rollouts:(t + 1) * n_rollouts, :] = accelerations
 
                 tstep_states = tstep_next_states
         else:

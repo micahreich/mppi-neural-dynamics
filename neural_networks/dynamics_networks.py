@@ -85,7 +85,7 @@ class DynamicsNN:
         return model
 
     def train(self, npz_data_path, n_epochs=100, lr=1e-3,
-              save_model=True, name=None, patience=3, cosine_lr=True):
+              save_model=True, name=None, patience=3, cosine_lr=True, batch_size=1024):
         self.load_dataset(npz_data_path)
 
         normalizer = tf.keras.layers.Normalization(axis=-1)
@@ -102,7 +102,7 @@ class DynamicsNN:
             self.train_labels,
             validation_split=0.2,
             verbose=1, epochs=n_epochs,
-            batch_size=1024,
+            batch_size=batch_size,
             callbacks=callbacks)
 
         dynamics_model.evaluate(self.test_examples, self.test_labels, verbose=1)
