@@ -236,7 +236,7 @@ class MPPIController:
         assert (self._last_control_seq.shape == (self._horizon_length, self._nu))
 
         rollout_current_states = np.tile(state, (self._n_rollouts, 1))
-        rollout_cumcosts = np.zeros(self._n_rollouts)
+        rollout_cumcosts = np.zeros(self._n_rollouts, dtype=np.float64)
 
         # Shape for rollouts_noise_u.shape == (n_rollouts, nu, horizon_length)
         # rollouts_noise_u = np.random.multivariate_normal(mean=np.zeros(self._nu),

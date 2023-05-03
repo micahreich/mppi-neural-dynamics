@@ -263,7 +263,7 @@ class Planar2RArmBase(BaseSystem):
         self.null_action = np.zeros(self.nu)
 
         self.u_lo, self.u_hi = np.array([-10, -10]), np.array([10, 10])
-        self.accel_lo, self.accel_hi = np.array([-6, -6]), np.array([6, 6])
+        self.accel_lo, self.accel_hi = np.array([-4,0, -4.0]), np.array([4.0, 4.0])
 
         self.x_lo, self.x_hi = np.array([0, -4, 0, -4]), np.array([2*np.pi, 4, 2*np.pi, 4])
 

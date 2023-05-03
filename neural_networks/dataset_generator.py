@@ -73,9 +73,6 @@ class DatasetGenerator:
     def sample_initial_states(self, n_samples, x_lo, x_hi):
         return self._uniform_2d_bycol(nr=n_samples, nc=self.system.nx, lo=x_lo, hi=x_hi)
     
-    # def sample_accelerations(self, n_samples, a_lo, a_hi):
-    #     return self._uniform_2d_bycol(nr=n_samples, nc=self.system.nu, lo=a_lo, hi=a_hi)
-
     def sample_pairs(self, n_samples, horizon_length=None):
 
         if self.sample_method == "random rollouts" and \
@@ -110,22 +107,6 @@ class DatasetGenerator:
                 data_x = np.hstack((initial_states, actions))
                 data_y = accelerations
             
-            # for i in tqdm(range(n_samples)):
-            #     initial_state, action = tstep_states[i], actions[i]
-
-            #     if self.inverse_dynamics:
-            #         torque = self.system.inverse_dynamics(initial_state, action)
-            #         next_state = self.system.integrator.step(initial_state, torque)
-
-            #         data_x[i] = np.hstack((initial_state, action))
-            #         data_y[i] = torque
-            #     else:
-            #         next_state = self.system.integrator.step(initial_state, action)
-
-            #         acceleration = (next_state[1::2] - initial_state[1::2]) / self.system.dt
-
-            #         data_x[i] = np.hstack((initial_state, action))
-            #         data_y[i] = acceleration
         elif self.sample_method == "random rollouts":
             n_rollouts = n_samples // horizon_length
             print("[DatasetGenerator] [Info] Generating {} rollouts of length {}.".format(n_rollouts, horizon_length))

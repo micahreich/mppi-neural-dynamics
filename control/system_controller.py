@@ -59,6 +59,7 @@ class SystemController:
             evolve_state_batched=evolve_state_batched
         )
 
+        self.ds = ds
         self.n_rollouts = n_rollouts
         self.horizon_length = horizon_length
         self.exploration_cov = exploration_cov

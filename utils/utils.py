@@ -21,7 +21,7 @@ class Simulator:
 
     def run(self, simulation_length, initial_state,
             controlled=False, measurement_noise=False, save_fname=None,
-            control_action=None, debug=False):
+            control_action=None, debug=False, timing=False):
 
         if self.controller is None:
             controlled = False
@@ -50,7 +50,9 @@ class Simulator:
             controls[i] = action
 
         end_time = perf_counter()
-        print("[Simulator] [Info] {} simulation elapsed time: {:.5f} s".format(str(self.ds), end_time - start_time))
+        
+        if timing:
+            print("[Simulator] [Info] {} simulation elapsed time: {:.5f} s".format(str(self.ds), end_time - start_time))
 
         if save_fname: self.save(states, controls, save_fname)
         times = np.linspace(0, simulation_length, n_steps)
@@ -102,7 +104,7 @@ class Euler:
         return state + update
 
 
-class Path:
+class ParametricPath:
     def __init__(self, parametric_eqn, time_length):
         """
         General path class as defined by a parametric curve which takes inputs from [0, 1] and
@@ -131,7 +133,7 @@ class Path:
         return self.parametric_eqn(t / self.time_length)
 
 
-class Trajectory(Path):
+class Trajectory(ParametricPath):
     def __init__(self, position_parametric_eqn, velocity_parametric_eqn, time_length):
         self.position_parametric_eqn = position_parametric_eqn
         self.velocity_parametric_eqn = velocity_parametric_eqn
