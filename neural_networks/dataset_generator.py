@@ -53,7 +53,6 @@ class DatasetGenerator:
         self.latest_dataset_fname = None
         self.sample_method = sample_method
 
-        self.batched_ensure_state = np.vectorize(self.system.ensure_state, signature="(nx)->(nx)")
         self.batched_next_state = np.vectorize(self.system.integrator.step, signature="(nx),(nu)->(nx)")
 
         self.inverse_dynamics = inverse_dynamics
@@ -88,7 +87,7 @@ class DatasetGenerator:
         data_y = np.empty(shape=(n_samples, self.system.nx // 2))
 
         if self.sample_method == "random singles":
-            initial_states = self.batched_ensure_state(
+            initial_states = self.system.ensure_states(
                 self.sample_initial_states(n_samples, self.system.x_lo, self.system.x_hi)
             )
             
@@ -111,7 +110,7 @@ class DatasetGenerator:
             n_rollouts = n_samples // horizon_length
             print("[DatasetGenerator] [Info] Generating {} rollouts of length {}.".format(n_rollouts, horizon_length))
 
-            tstep_states = self.batched_ensure_state(
+            tstep_states = self.system.ensure_states(
                 self.sample_initial_states(n_rollouts, self.system.x_lo, self.system.x_hi)
             )
 
@@ -120,7 +119,7 @@ class DatasetGenerator:
                     tstep_actions = self.sample_actions(n_rollouts, self.system.accel_lo, self.system.accel_hi)
                     tstep_torques = self.batched_inverse_dynamics(tstep_states, tstep_actions)
 
-                    tstep_next_states = self.batched_ensure_state(
+                    tstep_next_states = self.system.ensure_states(
                         self.batched_next_state(tstep_states, tstep_torques)
                     )
 
@@ -128,7 +127,7 @@ class DatasetGenerator:
                     data_y[t * n_rollouts:(t + 1) * n_rollouts, :] = tstep_torques
                 else:
                     tstep_actions = self.sample_actions(n_rollouts, self.system.u_lo, self.system.u_hi)
-                    tstep_next_states = self.batched_ensure_state(
+                    tstep_next_states = self.system.ensure_states(
                         self.batched_next_state(state=tstep_states, control=tstep_actions)
                     )
 

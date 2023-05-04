@@ -44,7 +44,7 @@ class Simulator:
 
             current_state = self.ds.simulator(current_state, action,
                                               measurement_noise=measurement_noise)
-            current_state = self.ds.ensure_state(current_state)
+            current_state = self.ds.ensure_states(np.array([current_state]))[0]
 
             states[i] = current_state
             controls[i] = action

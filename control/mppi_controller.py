@@ -16,6 +16,7 @@ class MPPIController:
                  terminal_cost, state_cost,
                  evolve_state,
                  dt: float,
+                 ensure_states = lambda x: x,
                  control_noise_initialization: ControlNoiseInit = ControlNoiseInit.LAST,
                  n_realized_controls=1,
                  control_range=None,
@@ -74,6 +75,7 @@ class MPPIController:
             self._evolve_state = evolve_state
         else:
             self._evolve_state = np.vectorize(evolve_state, signature="(nx),(nu)->(nx)")
+        self._ensure_states = ensure_states
 
         self._terminal_cost = np.vectorize(terminal_cost, signature="(nx)->()")
         self._state_cost = np.vectorize(state_cost, signature="(nx)->()")
@@ -81,13 +83,6 @@ class MPPIController:
         self._exploration_cov_inv = np.linalg.inv(self._exploration_cov)
 
         if not control_cost:
-            # def default_control_cost(u, noise):
-            #     R = np.diag(np.ones(self._nu))
-            #     return np.dot(u, )
-            #     return self._exploration_lambda * np.dot(
-            #         u,
-            #         np.dot(self._exploration_cov_inv, np.abs(noise))
-            #     )
             def default_control_cost(u):
                 return np.dot(u, u)
 
@@ -159,15 +154,6 @@ class MPPIController:
 
         return updated_u_seq
 
-        #
-        # weights = np.tile(weights.reshape((-1, 1, 1)), (1, self._nu, self._horizon_length))
-        # weighted_u = rollouts_u * weights
-        # weighted_u = np.sum(weighted_u, axis=0).T
-        #
-        # mu = self._last_control_seq
-        #
-        # return self._alpha_mu * mu + (1 - self._alpha_mu) * weighted_u
-
     def update_exploration_cov(self, rollouts_u, weights):
         rollouts_nominal_u = self._last_control_seq.T.reshape((1, -1, self._horizon_length))
 
@@ -238,22 +224,8 @@ class MPPIController:
         rollout_current_states = np.tile(state, (self._n_rollouts, 1))
         rollout_cumcosts = np.zeros(self._n_rollouts, dtype=np.float64)
 
-        # Shape for rollouts_noise_u.shape == (n_rollouts, nu, horizon_length)
-        # rollouts_noise_u = np.random.multivariate_normal(mean=np.zeros(self._nu),
-        #                                                  cov=self._exploration_cov,
-        #                                                  size=(self._n_rollouts, self._horizon_length)).swapaxes(1, 2)
-        #
-        # # Shape for rollouts_nominal_u.shape == (n_rollouts, nu, horizon_length)
-        # rollouts_nominal_u = self._last_control_seq.T.reshape((1, -1, self._horizon_length))
-        # rollouts_nominal_u = np.tile(rollouts_nominal_u, (self._n_rollouts, 1, 1))
-        #
-        # rollouts_u = rollouts_nominal_u + rollouts_noise_u
-
         rollouts_u = np.empty(shape=(self._n_rollouts, self._nu, self._horizon_length))
 
-        # if self.include_null_controls:
-        #     rollouts_noise_u[-1, :, :] = -rollouts_nominal_u[-1, :, :]
-        # print("cov mean", np.mean(self._last_cov_seq))
         for t in range(0, self._horizon_length):
             # Generate control noise
             rollout_current_noise = np.random.multivariate_normal(
@@ -277,6 +249,7 @@ class MPPIController:
                 rollout_current_states = self._evolve_state(nn_input)
             else:
                 rollout_current_states = self._evolve_state(rollout_current_states, rollout_current_u)
+            rollout_current_states = self._ensure_states(rollout_current_states)
 
             # Calculate current time-step state cost
             rollout_cumcosts += self._state_cost(rollout_current_states)

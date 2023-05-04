@@ -56,7 +56,8 @@ class SystemController:
             control_noise_initialization=control_noise_initialization,
             nn_dynamics=nn_dynamics,
             include_null_controls=include_null_controls,
-            evolve_state_batched=evolve_state_batched
+            evolve_state_batched=evolve_state_batched,
+            ensure_states=ds.ensure_states
         )
 
         self.ds = ds

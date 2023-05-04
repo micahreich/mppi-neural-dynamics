@@ -12,7 +12,7 @@ class BaseSystem:
         self.measurement_noise_cov = measurement_noise_cov
 
     def set_integrator(self, integrator_fn): self.integrator = integrator_fn
-    def ensure_state(self, x): return x
+    def ensure_states(self, x): return x
     def ensure_control(self, u): return u
     
     def kinematic_evolve_state(self, states, controls):
@@ -118,11 +118,11 @@ class Pendulum(BaseSystem):
 
         return theta_ddot * m * l**2 + b * dot_theta + m * g * l * np.sin(theta)
 
-    def ensure_state(self, x):
-        theta, dot_theta = x
+    def ensure_states(self, states):
         tau = 2 * np.pi
+        states[:, ::2] %= tau
 
-        return np.array([theta % tau, dot_theta])
+        return states
 
     def ensure_control(self, tau):
         return np.clip(tau, self.tau_lo, self.tau_hi)
@@ -173,11 +173,11 @@ class CartPole(BaseSystem):
 
         super().__init__(self.dt, self.integrator, self.measurement_noise_cov)
 
-    def ensure_state(self, x):
-        p, dot_p, theta, dot_theta = x
+    def ensure_states(self, states):
         tau = 2 * np.pi
+        states[:, 2] %= tau
 
-        return np.array([p, dot_p, theta % tau, dot_theta])
+        return states
 
     def __str__(self):
         return "cart_pole"
@@ -352,11 +352,11 @@ class Planar2RArmBase(BaseSystem):
         tau = np.dot(M, ddot_t) + np.dot(C, dot_t) - N
         return tau
 
-    def ensure_state(self, x):
-        t1, dot_t1, t2, dot_t2 = x
+    def ensure_states(self, states):
         tau = 2*np.pi
+        states[:, ::2] %= tau
 
-        return np.array([t1 % tau, dot_t1, t2 % tau, dot_t2])
+        return states
 
     def ensure_control(self, tau):
         return np.clip(tau, self.u_lo, self.u_hi)
@@ -397,11 +397,11 @@ class Planar2RArm(Planar2RArmBase):
     def inverse_dynamics(self, x, ddot_t):
         return super().inverse_dynamics(x[:4], ddot_t)
 
-    def ensure_state(self, x):
-        t1, dot_t1, t2, dot_t2, param, dot_param = x
+    def ensure_states(self, states):
         tau = 2*np.pi
+        states[:, :4:2] %= tau
 
-        return np.array([t1 % tau, dot_t1, t2 % tau, dot_t2, param, dot_param])
+        return states
 
     def kinematic_evolve_state(self, states, controls):
         n = controls.shape[0]
