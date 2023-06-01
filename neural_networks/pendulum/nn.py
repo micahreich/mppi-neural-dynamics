@@ -32,8 +32,8 @@ if __name__ == "__main__":
 
     rollouts_ds = file_dir + "/data/500k_rollouts_2to2__26-04-2023 02:32:28.npz"
     nn = DynamicsNN(ds=inverted_pendulum,
-                    n_nodes=32,
+                    n_nodes=16,
                     save_dir=file_dir + "/comparison_models", decay_steps=4e7)
 
     nn.train(rollouts_ds, n_epochs=150, lr=0.001,
-             save_model=True, name="pendulum_tanh_32_rollouts", patience=4)
+             save_model=True, name="pendulum_tanh_16_rollouts", patience=4)

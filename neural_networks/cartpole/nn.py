@@ -27,15 +27,15 @@ def generate_dataset(n_samples, sample_method, horizon_length, train_percentage,
 
 
 if __name__ == "__main__":
-    # _ = generate_dataset(n_samples=500_000, sample_method="random rollouts",
-    #                      horizon_length=10, train_percentage=0.8, name="500k_rollouts")
-    # _ = generate_dataset(n_samples=500_000, sample_method="random singles",
-    #                      horizon_length=10, train_percentage=0.8, name="500k_singles")
-    rollouts_ds = file_dir + "/data/500k_rollouts__24-04-2023 23:24:19.npz"
+    # _ = generate_dataset(n_samples=36_000, sample_method="random rollouts",
+    #                      horizon_length=10, train_percentage=0.8, name="36k_rollouts")
 
+    rollouts_ds = file_dir + "/data/36k_rollouts__04-05-2023 04:04:49.npz"
+
+    N_NODES = 64
     nn = DynamicsNN(ds=cartpole,
-                    n_nodes=64,
-                    save_dir=file_dir + "/models",
+                    n_nodes=N_NODES,
+                    save_dir=file_dir + "/comparison_models",
                     decay_steps=4e7)
-    nn.train(rollouts_ds, n_epochs=150, lr=0.001,
-             save_model=True, name="cartpole_tanh_rollouts_64", patience=4)
+    nn.train(rollouts_ds, n_epochs=1500, lr=0.001, batch_size=1024,
+             save_model=True, name="cartpole_tanh_rollouts_{}".format(N_NODES), patience=20)
