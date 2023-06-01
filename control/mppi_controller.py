@@ -49,7 +49,7 @@ class MPPIController:
         :param control_noise_initialization: Method with which to initialize new control sequences
         :param n_realized_controls: Number of elements of the control sequence to be returned and executed on the
         system before resampling the control sequence
-        :param control_range: Dict[str, (nu,)] with keys "min", "max"indicating the min, max
+        :param control_range: Dict[str, (nu,)] with keys "min", "max" indicating the min, max
         of control values to use in prediction
         """
         self.nn_dynamics = nn_dynamics
@@ -88,7 +88,6 @@ class MPPIController:
 
             control_cost = default_control_cost
 
-        # self._control_cost = np.vectorize(control_cost, signature="(nu),(nu)->()")
         self._control_cost = np.vectorize(control_cost, signature="(nu)->()")
 
         self._control_noise_initialization = control_noise_initialization
@@ -155,6 +154,14 @@ class MPPIController:
         return updated_u_seq
 
     def update_exploration_cov(self, rollouts_u, weights):
+        """
+        Add or lessen controls sampling covariance to get new, optimized controls covariance
+
+        :param rollouts_u: T x K sampled controls
+        :param weights: Weights for each rollout
+        :return: Modified covariance sequence, adding covariance if high-scoring controls had high variance and vice versa
+        """
+        
         rollouts_nominal_u = self._last_control_seq.T.reshape((1, -1, self._horizon_length))
 
         rollouts_nominal_u = np.tile(rollouts_nominal_u, (self._n_rollouts, 1, 1))
@@ -199,6 +206,11 @@ class MPPIController:
         return control_seq
 
     def shift_cov_seq(self, cov_seq):
+        """
+        Shift the covariance sequence ahead by 1 index
+        :param cov_seq: Covariance sequence to be shifted
+        :return: Shifted covariance sequence with the last item initialized as LAST
+        """
         new_cov_seq = np.roll(cov_seq, -1, axis=2)
         new_cov_seq[:, :, -1] = new_cov_seq[:, :, -2]
 
